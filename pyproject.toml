@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "datascience"
+version = "0.1.0"
+description = "OddsJam Opensource Datascience project"
+authors = ["Vincenzo Ampolo <vincenzo@oddsjam.com>"]
+license = "GPL v3"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+numpy = "^2.0.0"
+pandas = "^2.2.2"
+notebook = "^7.2.1"
+dask = {extras = ["complete"], version = "^2024.6.0"}
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
