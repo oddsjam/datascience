@@ -9,7 +9,7 @@ It contains the backtesting framework which can be used to quickly test differen
 poetry install
 ```
 
-In vscode you can open the `notebooks/example.ipynb` file to see how to call the backtesting function.
+In vscode you can open the `notebooks/pos_ev_challenge.ipynb` file to see how to call the backtesting function.
 
 
 ## What can I use this framework for?

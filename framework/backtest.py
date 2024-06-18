@@ -16,20 +16,6 @@ from framework.utils import (
     gen_save_name,
 )
 
-BACKTESTS_DTYPE = {
-    "timestamp": "int64",
-    "id": "str",
-    "locked": "bool",
-    "price": "float",
-    "points": "float",
-    "sport": "str",
-    "league": "str",
-    "game_id": "str",
-    "sportsbook": "str",
-    "market": "str",
-    "name": "str",
-}
-
 
 def _process_file(
     games_ddf,
