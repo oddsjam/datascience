@@ -7,7 +7,8 @@ It contains the backtesting framework which can be used to quickly test differen
 
 If you reached this repo because you are interested on the +EV AI challenge, feel free to have a look at `notebooks/pos_ev_challenge.ipynb` for the details of the challenge. 
 
-Feel free to mail your notebook with the algo and the `/data/output` folder to Vincenzo Ampolo <vincenzo@oddsjam.com> for evaluation.
+Feel free to mail your notebook with the AI algorithm and the `/data/output` folder to Vincenzo Ampolo <vincenzo@oddsjam.com> for evaluation.
+
 Whoever can beat OddsJam AI picking EV bets will grant a prize of $3000 USD.
 
 ## How to use
