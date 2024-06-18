@@ -19,6 +19,9 @@ This allows to test different strategies to pick the bets. The bets picked are g
 
 ## +EV Challenge
 
-If you reached this repo because you are interested on the +EV challenge, feel free to have a look at `notebooks/pos_ev_challenge.ipynb` for an example and the details of the challenge. Feel free to mail your notebook to Vincenzo Ampolo <vincenzo@oddsjam.com> for evaluation. Whoever can beat OddsJam AI picking EV bets will grant a prize of $3000 USD.
+If you reached this repo because you are interested on the +EV challenge, feel free to have a look at `notebooks/pos_ev_challenge.ipynb` for the details of the challenge. 
+
+Feel free to mail your notebook with the algo and the `/data/output` folder to Vincenzo Ampolo <vincenzo@oddsjam.com> for evaluation.
+ Whoever can beat OddsJam AI picking EV bets will grant a prize of $3000 USD.
 
 
