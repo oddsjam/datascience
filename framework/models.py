@@ -1,6 +1,5 @@
 import dataclasses
 import json
-from datetime import datetime, timezone
 
 
 @dataclasses.dataclass(slots=True)
@@ -15,7 +14,7 @@ class OddTs:
     sport: str | None = None
     league: str | None = None
     points: float | None = None
-    price: int | None = None
+    price: float | None = None
     is_main: bool | None = None
     is_live: bool | None = None
     timestamp: float | None = None
