@@ -5,6 +5,7 @@ description = "OddsJam Opensource Datascience project"
 authors = ["Vincenzo Ampolo <vincenzo@oddsjam.com>"]
 license = "GPL v3"
 readme = "README.md"
+package-mode = false
 
 [tool.poetry.dependencies]
 python = "^3.12"
@@ -12,6 +13,7 @@ numpy = "^2.0.0"
 pandas = "^2.2.2"
 notebook = "^7.2.1"
 dask = {extras = ["dataframe"], version = "^2024.6.2"}
+pre-commit = "^3.7.1"
 
 
 [build-system]
