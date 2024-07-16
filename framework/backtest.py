@@ -75,7 +75,7 @@ def _process_file(
         if i % 1000 == 0:
             logging.info(f"Analysed {i}/{len(timestamps)} timestamps")
         if len(opportunities) >= 2500000 or i == len(timestamps) - 1:
-            logging.info(f"Writing to parquet file")
+            logging.info("Writing to parquet file")
             oppo_ddf = dd.from_pandas(pd.DataFrame(opportunities), chunksize=500000)
             oppo_ddf.to_parquet(
                 f"{output_folder}/{save_name}/opportunities_{save_name}/partitions/batch_{file_index}_timestamp_{parquet_file_index}.parquet",

@@ -1,6 +1,5 @@
 import dataclasses
 import json
-from datetime import datetime, timezone
 
 
 @dataclasses.dataclass(slots=True)
