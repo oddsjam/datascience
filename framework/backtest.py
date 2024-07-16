@@ -3,6 +3,7 @@ import os
 import time
 from collections import defaultdict
 from datetime import datetime
+from typing import Callable
 
 import dask.dataframe as dd
 import numpy as np
@@ -26,8 +27,8 @@ def _process_file(
     find_opportunities_function,
 ):
     opportunities = []
-    active_odds_by_game_id = {}
-    game_id_by_start_time = {}
+    active_odds_by_game_id: dict[int, dict[str, dict[str, float]]] = {}
+    game_id_by_start_time: dict[float, set[int]] = {}
     timestamps = sorted(games_ddf["timestamp"].unique().compute())
     logging.debug(f"Found {len(timestamps)} timestamps")
 
@@ -95,7 +96,7 @@ def run_backtest(
     leagues: list[str],
     start_date: str,
     end_date: str,
-    find_opportunities_function: callable = lambda odds: [],
+    find_opportunities_function: Callable = lambda odds: [],
     data_folder: str = "../data",
     output_folder: str = "../output",
 ):
