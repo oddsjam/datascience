@@ -74,9 +74,13 @@ def _process_file(
 
         # clean old games
         clean_timestamp = time.perf_counter()
-        made_changes = clean_old_games(game_id_by_start_time, active_odds_by_game_id, timestamp)
+        made_changes = clean_old_games(
+            game_id_by_start_time, active_odds_by_game_id, timestamp
+        )
         if made_changes:
-            logging.info(f"Cleaned old games in {time.perf_counter() - clean_timestamp} seconds")
+            logging.info(
+                f"Cleaned old games in {time.perf_counter() - clean_timestamp} seconds"
+            )
 
         if i % 1000 == 0:
             logging.info(f"Analysed {i}/{len(timestamps)} timestamps")
