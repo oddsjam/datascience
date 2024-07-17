@@ -83,9 +83,6 @@ def clean_old_games(game_id_by_start_time, active_odds_by_game_id, timestamp):
         set([key for key in game_id_by_start_time.keys() if key < timestamp])
     )
     for old_key in old_keys:
-        if old_key == 1712013000.0:
-            logging.debug(f"Found old key {old_key} at timestamp {timestamp}")
-
         for game_id in game_id_by_start_time[old_key]:
             if game_id in active_odds_by_game_id:
                 logging.debug(
