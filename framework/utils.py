@@ -1,4 +1,6 @@
 import logging
+import re
+from typing import Optional
 
 import dask
 
@@ -22,6 +24,14 @@ def filter_and_convert(df, timestamp):
     return df[df["timestamp"] == timestamp].to_dict(orient="records")
 
 
+def normalize_id(name: str | None, sep: str = "_") -> Optional[str]:
+    """Normalize a id to be used as key"""
+    if name is None:
+        return None
+    name = re.sub(r"[^a-zA-Z0-9\+\-]+", " ", name)
+    return name.replace(" ", sep).lower()
+
+
 filter_and_convert_delayed = dask.delayed(filter_and_convert)
 
 
@@ -41,25 +51,30 @@ def dict_to_oddts(record: dict) -> OddTs:
     return OddTs(**odd)
 
 
-def cache_odds(game_id, market, odds, active_odds_by_game_id):
+def cache_odds(game_id, norm_market, odds, active_odds_by_game_id):
     for odd in odds:
-        sportsbook = odd["sportsbook"]
-        name = odd["name"]
+        norm_sportsbook = normalize_id(odd["sportsbook"])
+        norm_name = normalize_id(odd["name"])
         locked = odd.get("locked", False)
         if game_id not in active_odds_by_game_id:
             active_odds_by_game_id[game_id] = {}
-        if market not in active_odds_by_game_id[game_id]:
-            active_odds_by_game_id[game_id][market] = {}
-        if name not in active_odds_by_game_id[game_id][market]:
-            active_odds_by_game_id[game_id][market][name] = {}
-        if sportsbook not in active_odds_by_game_id[game_id][market][name]:
-            active_odds_by_game_id[game_id][market][name][sportsbook] = {}
+        if norm_market not in active_odds_by_game_id[game_id]:
+            active_odds_by_game_id[game_id][norm_market] = {}
+        if norm_sportsbook not in active_odds_by_game_id[game_id][norm_market]:
+            active_odds_by_game_id[game_id][norm_market][norm_sportsbook] = {}
+        if (
+            norm_name
+            not in active_odds_by_game_id[game_id][norm_market][norm_sportsbook]
+        ):
+            active_odds_by_game_id[game_id][norm_market][norm_sportsbook][
+                norm_name
+            ] = {}
         if locked:
-            del active_odds_by_game_id[game_id][market][name][sportsbook]
+            del active_odds_by_game_id[game_id][norm_market][norm_sportsbook][norm_name]
         else:
-            active_odds_by_game_id[game_id][market][name][sportsbook] = dict_to_oddts(
-                odd
-            )
+            active_odds_by_game_id[game_id][norm_market][norm_sportsbook][
+                norm_name
+            ] = dict_to_oddts(odd)
 
 
 def clean_old_games(game_id_by_start_time, active_odds_by_game_id, timestamp):
