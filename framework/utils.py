@@ -44,18 +44,22 @@ def dict_to_oddts(record: dict) -> OddTs:
 def cache_odds(game_id, market, odds, active_odds_by_game_id):
     for odd in odds:
         sportsbook = odd["sportsbook"]
+        name = odd["name"]
         locked = odd.get("locked", False)
         if game_id not in active_odds_by_game_id:
             active_odds_by_game_id[game_id] = {}
         if market not in active_odds_by_game_id[game_id]:
             active_odds_by_game_id[game_id][market] = {}
-
-        if sportsbook not in active_odds_by_game_id[game_id][market]:
-            active_odds_by_game_id[game_id][market][sportsbook] = {}
+        if name not in active_odds_by_game_id[game_id][market]:
+            active_odds_by_game_id[game_id][market][name] = {}
+        if sportsbook not in active_odds_by_game_id[game_id][market][name]:
+            active_odds_by_game_id[game_id][market][name][sportsbook] = {}
         if locked:
-            del active_odds_by_game_id[game_id][market][sportsbook]
+            del active_odds_by_game_id[game_id][market][name][sportsbook]
         else:
-            active_odds_by_game_id[game_id][market][sportsbook] = dict_to_oddts(odd)
+            active_odds_by_game_id[game_id][market][name][sportsbook] = dict_to_oddts(
+                odd
+            )
 
 
 def clean_old_games(game_id_by_start_time, active_odds_by_game_id, timestamp):
