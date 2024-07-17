@@ -78,19 +78,24 @@ def cache_odds(game_id, norm_market, odds, active_odds_by_game_id):
 
 
 def clean_old_games(game_id_by_start_time, active_odds_by_game_id, timestamp):
+    made_changes = False
     old_keys = list(
         set([key for key in game_id_by_start_time.keys() if key < timestamp])
     )
     for old_key in old_keys:
         if old_key == 1712013000.0:
-            logging.info(f"Found old key {old_key} at timestamp {timestamp}")
+            logging.debug(f"Found old key {old_key} at timestamp {timestamp}")
 
         for game_id in game_id_by_start_time[old_key]:
             if game_id in active_odds_by_game_id:
-                logging.info(
+                logging.debug(
                     f"Deleting valid odds for {game_id} at timestamp {timestamp}"
                 )
+                made_changes = True
                 del active_odds_by_game_id[game_id]
         if old_key in game_id_by_start_time:
-            logging.info(f"Deleting {old_key} at timestamp {timestamp}")
+            logging.debug(f"Deleting {old_key} at timestamp {timestamp}")
+            made_changes = True
             del game_id_by_start_time[old_key]
+
+    return made_changes

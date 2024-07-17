@@ -73,7 +73,10 @@ def _process_file(
             opportunities.extend(tmp_opportunities)
 
         # clean old games
-        clean_old_games(game_id_by_start_time, active_odds_by_game_id, timestamp)
+        clean_timestamp = time.perf_counter()
+        made_changes = clean_old_games(game_id_by_start_time, active_odds_by_game_id, timestamp)
+        if made_changes:
+            logging.info(f"Cleaned old games in {time.perf_counter() - clean_timestamp} seconds")
 
         if i % 1000 == 0:
             logging.info(f"Analysed {i}/{len(timestamps)} timestamps")
@@ -101,7 +104,12 @@ def run_backtest(
     find_opportunities_function: Callable = lambda odds: [],
     data_folder: str = "../data",
     output_folder: str = "../output",
+    log_level: str = None,
 ):
+    if log_level:
+        root = logging.getLogger()
+        root.setLevel(log_level)
+
     save_name = gen_save_name(sports, leagues, start_date, end_date)
 
     # read summary
