@@ -61,13 +61,18 @@ def _process_file(
             cache_odds(game_id, market, odds, active_odds_by_game_id)
             odds_by_market = active_odds_by_game_id[game_id][market]
 
-            # odds_to_check = [
-            #     odd
-            #     for sportsbook in odds_to_check.values()
-            #     for odd in sportsbook.values()
-            # ]
+            odds_by_market = active_odds_by_game_id[game_id][market]
+
+            odds_to_check = {
+                market: [
+                    odd
+                    for sportsbook in odds_by_market.values()
+                    for odd in sportsbook.values()
+                ]
+            }
+
             logging.debug(f"Processing game {game_id} market {market} at {timestamp}")
-            tmp_opportunities = find_opportunities_function(odds_by_market)
+            tmp_opportunities = find_opportunities_function(odds_to_check)
             opportunities.extend(tmp_opportunities)
 
         # clean old games
