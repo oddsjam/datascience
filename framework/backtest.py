@@ -15,6 +15,7 @@ from .utils import (
     dict_items_generator,
     filter_and_convert_delayed,
     gen_save_name,
+    normalize_id,
 )
 
 
@@ -58,18 +59,14 @@ def _process_file(
 
             game_id_by_start_time[start_date_ts].add(game_id)
 
-            cache_odds(game_id, market, odds, active_odds_by_game_id)
-            odds_by_market = active_odds_by_game_id[game_id][market]
+            norm_market = normalize_id(market)
 
-            odds_by_market = active_odds_by_game_id[game_id][market]
+            cache_odds(game_id, norm_market, odds, active_odds_by_game_id)
+            odds_by_market = active_odds_by_game_id[game_id][norm_market]
 
-            odds_to_check = {
-                market: [
-                    odd
-                    for sportsbook in odds_by_market.values()
-                    for odd in sportsbook.values()
-                ]
-            }
+            odds_to_check = {}
+            for sportsbook, names in odds_by_market.items():
+                odds_to_check[sportsbook] = [odd for odd in names.values()]
 
             logging.debug(f"Processing game {game_id} market {market} at {timestamp}")
             tmp_opportunities = find_opportunities_function(odds_to_check)
