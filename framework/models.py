@@ -1,8 +1,6 @@
 import dataclasses
 import json
 
-from .utils import normalize_id
-
 
 @dataclasses.dataclass(slots=True)
 class OddTs:
@@ -32,6 +30,8 @@ class OddTs:
     normalized_sportsbook: str | None = None
 
     def __post_init__(self):
+        from .utils import normalize_id
+        
         if self.points is not None and not isinstance(self.points, float):
             self.points = float(self.points)
         if self.price is not None and not isinstance(self.price, float):
