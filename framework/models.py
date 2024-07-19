@@ -23,6 +23,11 @@ class OddTs:
     normalized_selection: str | None = None
     selection_line: str | None = None
     selection_points: float | None = None
+    normalized_sport: str | None = None
+    normalized_league: str | None = None
+    normalized_market: str | None = None
+    normalized_name: str | None = None
+    normalized_sportsbook: str | None = None
 
     def __post_init__(self):
         if self.points is not None and not isinstance(self.points, float):
