@@ -15,7 +15,6 @@ from .utils import (
     dict_items_generator,
     filter_and_convert_delayed,
     gen_save_name,
-    normalize_id,
 )
 
 
@@ -44,13 +43,13 @@ def _process_file(
         start_time = time.perf_counter()
         for record in subset:
             game_id = record["game_id"]
-            market = record["market"]
-            grouped_data[(game_id, market)].append(record)
+            normalized_market = record["normalized_market"]
+            grouped_data[(game_id, normalized_market)].append(record)
         logging.debug(f"Grouped data in {time.perf_counter() - start_time} seconds")
 
         start_time_timestamp = time.perf_counter()
         for key, odds in dict_items_generator(grouped_data):
-            game_id, market = key
+            game_id, normalized_market = key
             start_date = start_date_map[game_id]
             start_date_ts = datetime.fromisoformat(start_date).timestamp()
 
@@ -59,16 +58,16 @@ def _process_file(
 
             game_id_by_start_time[start_date_ts].add(game_id)
 
-            norm_market = normalize_id(market)
-
-            cache_odds(game_id, norm_market, odds, active_odds_by_game_id)
-            odds_by_market = active_odds_by_game_id[game_id][norm_market]
+            cache_odds(game_id, normalized_market, odds, active_odds_by_game_id)
+            odds_by_market = active_odds_by_game_id[game_id][normalized_market]
 
             odds_to_check = {}
             for sportsbook, names in odds_by_market.items():
                 odds_to_check[sportsbook] = [odd for odd in names.values()]
 
-            logging.debug(f"Processing game {game_id} market {market} at {timestamp}")
+            logging.debug(
+                f"Processing game {game_id} market {normalized_market} at {timestamp}"
+            )
             tmp_opportunities = find_opportunities_function(odds_to_check)
             opportunities.extend(tmp_opportunities)
 

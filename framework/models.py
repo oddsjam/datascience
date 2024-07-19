@@ -1,6 +1,8 @@
 import dataclasses
 import json
 
+from .utils import normalize_id
+
 
 @dataclasses.dataclass(slots=True)
 class OddTs:
@@ -44,6 +46,14 @@ class OddTs:
             self.selection_points, float
         ):
             self.selection_points = float(self.selection_points)
+        if self.normalized_sport is None and self.sport is not None:
+            self.normalized_sport = normalize_id(self.sport)
+        if self.normalized_league is None and self.league is not None:
+            self.normalized_league = normalize_id(self.league)
+        if self.normalized_market is None and self.market is not None:
+            self.normalized_market = normalize_id(self.market)
+        if self.normalized_name is None and self.name is not None:
+            self.normalized_name = normalize_id(self.name)
 
     def json(self):
         return json.dumps(dataclasses.asdict(self))
