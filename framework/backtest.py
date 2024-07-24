@@ -5,17 +5,29 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Callable
 
+import dask
 import dask.dataframe as dd
 import numpy as np
 import pandas as pd
 
-from .utils import (
-    cache_odds,
-    clean_old_games,
-    dict_items_generator,
-    filter_and_convert_delayed,
-    gen_save_name,
-)
+from .utils import cache_odds, clean_old_games, dict_items_generator, gen_save_name
+
+dask.config.set({"optimization.fuse.active": True})
+
+
+def is_difference_less_than_x_seconds(timestamp1, timestamp2, x=10):
+    if isinstance(timestamp1, str):
+        timestamp1 = datetime.fromisoformat(timestamp1)
+    elif isinstance(timestamp1, int):
+        timestamp1 = datetime.fromtimestamp(timestamp1)
+    if isinstance(timestamp2, str):
+        timestamp2 = datetime.fromisoformat(timestamp2)
+    elif isinstance(timestamp2, int):
+        timestamp2 = datetime.fromtimestamp(timestamp2)
+
+    difference = abs(timestamp1 - timestamp2)
+
+    return difference.total_seconds() < 10
 
 
 def _process_file(
@@ -27,28 +39,39 @@ def _process_file(
     find_opportunities_function,
 ):
     opportunities = []
-    active_odds_by_game_id: dict[int, dict[str, dict[str, float]]] = {}
+    active_odds_by_game_id: dict[int, dict[str, dict[str, dict[str, float]]]] = {}
     game_id_by_start_time: dict[float, set[int]] = {}
     timestamps = sorted(games_ddf["timestamp"].unique().compute())
     logging.debug(f"Found {len(timestamps)} timestamps")
 
-    parquet_file_index = 0
+    games_dict = games_ddf.compute().to_dict("records")
+    sorted_games_dict = sorted(games_dict, key=lambda x: x["timestamp"])
 
-    for i, timestamp in enumerate(timestamps):
-        logging.debug(f"Processing timestamp {i}/{len(timestamps)}")
-        grouped_data = defaultdict(list)
-        start_time = time.perf_counter()
-        subset = filter_and_convert_delayed(games_ddf, timestamp).compute()
-        logging.debug(f"created subset in {time.perf_counter() - start_time} seconds")
-        start_time = time.perf_counter()
-        for record in subset:
+    parquet_file_index = 0
+    last_timestamp = None  # last timestamp
+    num_processed_timestamps = 0  # how many timestamps have been processed
+    grouped_data = defaultdict(list)
+
+    for i, record in enumerate(sorted_games_dict):
+        current_timestamp = record["timestamp"]
+
+        if i == 0:
+            last_timestamp = current_timestamp
+
+        if current_timestamp == last_timestamp:
             game_id = record["game_id"]
             normalized_market = record["normalized_market"]
             grouped_data[(game_id, normalized_market)].append(record)
-        logging.debug(f"Grouped data in {time.perf_counter() - start_time} seconds")
+
+            # if it's the last record, process it
+            if i < len(sorted_games_dict) - 1:
+                continue
+
+        if current_timestamp < last_timestamp:
+            raise ValueError("Timestamps are not sorted")
 
         start_time_timestamp = time.perf_counter()
-        for key, odds in dict_items_generator(grouped_data):
+        for j, (key, odds) in enumerate(dict_items_generator(grouped_data)):
             game_id, normalized_market = key
             start_date = start_date_map[game_id]
             start_date_ts = datetime.fromisoformat(start_date).timestamp()
@@ -66,28 +89,41 @@ def _process_file(
                 odds_to_check[sportsbook] = [odd for odd in names.values()]
 
             logging.debug(
-                f"Processing game {game_id} market {normalized_market} at {timestamp}"
+                f"Processing game {game_id} market {normalized_market} at {last_timestamp}"
             )
             tmp_opportunities = find_opportunities_function(odds_to_check)
             opportunities.extend(tmp_opportunities)
+        logging.debug(
+            f"Processed all odd in {time.perf_counter() - start_time_timestamp} seconds"
+        )
 
         # clean old games
         clean_timestamp = time.perf_counter()
         made_changes = clean_old_games(
-            game_id_by_start_time, active_odds_by_game_id, timestamp
+            game_id_by_start_time, active_odds_by_game_id, last_timestamp
         )
         if made_changes:
             logging.debug(
                 f"Cleaned old games in {time.perf_counter() - clean_timestamp} seconds"
             )
 
-        if i % 1000 == 0:
-            logging.info(f"Analysed {i}/{len(timestamps)} timestamps")
-        if len(opportunities) >= 2500000 or i == len(timestamps) - 1:
+        # reset after processing
+        last_timestamp = current_timestamp
+        num_processed_timestamps += 1
+        grouped_data = defaultdict(list)
+        game_id = record["game_id"]
+        normalized_market = record["normalized_market"]
+        grouped_data[(game_id, normalized_market)].append(record)
+
+        if num_processed_timestamps % 1000 == 0:
+            logging.info(f"Analysed {i+1}/{len(sorted_games_dict)} odds")
+        if i == len(sorted_games_dict) - 1:
+            logging.info(f"Analysed {i+1}/{len(sorted_games_dict)} odds")
+        if len(opportunities) >= 2500000 or i == len(sorted_games_dict) - 1:
             logging.info("Writing to parquet file")
             oppo_ddf = dd.from_pandas(pd.DataFrame(opportunities), chunksize=500000)
             oppo_ddf.to_parquet(
-                f"{output_folder}/{save_name}/opportunities_{save_name}/partitions/batch_{file_index}_timestamp_{parquet_file_index}.parquet",
+                f"{output_folder}/{save_name}/opportunities_{save_name}/partitions/file_{file_index}_batch_{parquet_file_index}.parquet",
                 engine="pyarrow",
             )
             del oppo_ddf
@@ -95,7 +131,7 @@ def _process_file(
             parquet_file_index += 1
 
         logging.debug(
-            f"Processed timestamp {i}/{len(timestamps)} in {time.perf_counter() - start_time_timestamp} seconds"
+            f"Processed timestamp {i}/{len(sorted_games_dict)} in {time.perf_counter() - start_time_timestamp} seconds"
         )
 
 
@@ -107,7 +143,7 @@ def run_backtest(
     find_opportunities_function: Callable = lambda odds: [],
     data_folder: str = "../data",
     output_folder: str = "../output",
-    log_level: str = None,
+    log_level: str | None = None,
 ):
     if log_level:
         root = logging.getLogger()
@@ -129,12 +165,12 @@ def run_backtest(
     base_dir = f"{data_folder}/{save_name}/odds_ts_{save_name}/partitions"
     i = 0
     start_time = time.perf_counter()
-    for root, dirs, files in os.walk(base_dir):
+    for root_path, dirs, files in os.walk(base_dir):
         total_files = len(dirs)
         for dir in dirs:
             if dir.endswith(".parquet"):
                 start_time_internal = time.perf_counter()
-                file_path = os.path.join(root, dir)
+                file_path = os.path.join(root_path, dir)
                 logging.info(f"reading file: {file_path}")
                 ddf = dd.read_parquet(file_path, engine="pyarrow")
                 ddf = ddf.replace([np.nan], [None])
