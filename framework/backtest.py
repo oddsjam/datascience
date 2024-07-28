@@ -3,11 +3,12 @@ import os
 import time
 from collections import defaultdict
 from datetime import datetime
+from logging.handlers import QueueHandler, QueueListener
+from multiprocessing import Manager, Pool
 from typing import Callable
 
 import dask
 import dask.dataframe as dd
-import numpy as np
 import pandas as pd
 
 from .utils import cache_odds, clean_old_games, dict_items_generator, gen_save_name
@@ -27,7 +28,7 @@ def is_difference_less_than_x_seconds(timestamp1, timestamp2, x=10):
 
     difference = abs(timestamp1 - timestamp2)
 
-    return difference.total_seconds() < 10
+    return difference.total_seconds() < x
 
 
 def _process_file(
@@ -37,6 +38,7 @@ def _process_file(
     save_name,
     file_index,
     find_opportunities_function,
+    interval=10,  # Run find_opportunities_function every 'interval' seconds
 ):
     opportunities = []
     active_odds_by_game_id: dict[int, dict[str, dict[str, dict[str, float]]]] = {}
@@ -49,10 +51,14 @@ def _process_file(
 
     parquet_file_index = 0
     last_timestamp = None  # last timestamp
+    last_processed_timestamp = None  # last timestamp processed for opportunities
     num_processed_timestamps = 0  # how many timestamps have been processed
     grouped_data = defaultdict(list)
 
+    not_last_timestamp = False
+
     for i, record in enumerate(sorted_games_dict):
+        not_last_timestamp = i < len(sorted_games_dict) - 1
         current_timestamp = record["timestamp"]
 
         if i == 0:
@@ -64,7 +70,7 @@ def _process_file(
             grouped_data[(game_id, normalized_market)].append(record)
 
             # if it's the last record, process it
-            if i < len(sorted_games_dict) - 1:
+            if not_last_timestamp:
                 continue
 
         if current_timestamp < last_timestamp:
@@ -91,8 +97,21 @@ def _process_file(
             logging.debug(
                 f"Processing game {game_id} market {normalized_market} at {last_timestamp}"
             )
+
+            if (
+                last_processed_timestamp is not None
+                and is_difference_less_than_x_seconds(
+                    last_processed_timestamp,
+                    last_timestamp,
+                    interval,
+                )
+                and not_last_timestamp
+            ):
+                continue
+
             tmp_opportunities = find_opportunities_function(odds_to_check)
             opportunities.extend(tmp_opportunities)
+            last_processed_timestamp = last_timestamp
         logging.debug(
             f"Processed all odd in {time.perf_counter() - start_time_timestamp} seconds"
         )
@@ -135,6 +154,40 @@ def _process_file(
         )
 
 
+def process_file_wrapper(args):
+    (
+        file_path,
+        i,
+        start_date_map,
+        output_folder,
+        save_name,
+        find_opportunities_function,
+        log_queue,
+        log_level,
+        interval,
+    ) = args
+
+    if not log_level:
+        log_level = "INFO"
+
+    # Configure logging for the worker process
+    logger = logging.getLogger()
+    logger.setLevel(log_level)
+    handler = QueueHandler(log_queue)
+    logger.addHandler(handler)
+
+    ddf = dd.read_parquet(file_path, engine="pyarrow")
+    _process_file(
+        ddf,
+        start_date_map,
+        output_folder,
+        save_name,
+        i,
+        find_opportunities_function,
+        interval=interval,
+    )
+
+
 def run_backtest(
     sports: list[str],
     leagues: list[str],
@@ -144,6 +197,7 @@ def run_backtest(
     data_folder: str = "../data",
     output_folder: str = "../output",
     log_level: str | None = None,
+    interval: int = 10,
 ):
     if log_level:
         root = logging.getLogger()
@@ -151,7 +205,7 @@ def run_backtest(
 
     save_name = gen_save_name(sports, leagues, start_date, end_date)
 
-    # read summary
+    # Read summary
     summary_path = f"{data_folder}/{save_name}/odds_summary_{save_name}.parquet"
     summary_ddf = dd.read_parquet(summary_path, engine="pyarrow")
     summary_ddf = summary_ddf.persist()
@@ -163,28 +217,36 @@ def run_backtest(
     logging.info("Start date map created")
 
     base_dir = f"{data_folder}/{save_name}/odds_ts_{save_name}/partitions"
-    i = 0
-    start_time = time.perf_counter()
-    for root_path, dirs, files in os.walk(base_dir):
-        total_files = len(dirs)
+    file_paths = []
+    for root_path, dirs, _ in os.walk(base_dir):
         for dir in dirs:
             if dir.endswith(".parquet"):
-                start_time_internal = time.perf_counter()
-                file_path = os.path.join(root_path, dir)
-                logging.info(f"reading file: {file_path}")
-                ddf = dd.read_parquet(file_path, engine="pyarrow")
-                ddf = ddf.replace([np.nan], [None])
-                ddf = ddf.persist()
-                _process_file(
-                    ddf,
-                    start_date_map,
-                    file_index=i,
-                    save_name=save_name,
-                    output_folder=output_folder,
-                    find_opportunities_function=find_opportunities_function,
-                )
-                i += 1
-                logging.info(
-                    f"Processed batch {i}/{total_files} in {time.perf_counter() - start_time_internal} seconds"
-                )
+                file_paths.append(os.path.join(root_path, dir))
+
+    start_time = time.perf_counter()
+    with Manager() as manager:
+        log_queue = manager.Queue()
+        handler = logging.StreamHandler()
+        listener = QueueListener(log_queue, handler)
+        listener.start()
+
+        args = [
+            (
+                file_path,
+                i,
+                start_date_map,
+                output_folder,
+                save_name,
+                find_opportunities_function,
+                log_queue,
+                log_level,
+                interval,
+            )
+            for i, file_path in enumerate(file_paths)
+        ]
+        with Pool() as pool:
+            pool.map(process_file_wrapper, args)
+
+        listener.stop()
+
     logging.info(f"Processed all files in {time.perf_counter() - start_time} seconds")
