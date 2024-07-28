@@ -9,7 +9,6 @@ from typing import Callable
 
 import dask
 import dask.dataframe as dd
-import numpy as np
 import pandas as pd
 
 from .utils import cache_odds, clean_old_games, dict_items_generator, gen_save_name
@@ -104,8 +103,9 @@ def _process_file(
                 and is_difference_less_than_x_seconds(
                     last_processed_timestamp,
                     last_timestamp,
-                    interval and not_last_timestamp,
+                    interval,
                 )
+                and not_last_timestamp
             ):
                 continue
 
@@ -154,62 +154,6 @@ def _process_file(
         )
 
 
-def run_backtest_old(
-    sports: list[str],
-    leagues: list[str],
-    start_date: str,
-    end_date: str,
-    find_opportunities_function: Callable = lambda odds: [],
-    data_folder: str = "../data",
-    output_folder: str = "../output",
-    log_level: str | None = None,
-):
-    if log_level:
-        root = logging.getLogger()
-        root.setLevel(log_level)
-
-    save_name = gen_save_name(sports, leagues, start_date, end_date)
-
-    # read summary
-    summary_path = f"{data_folder}/{save_name}/odds_summary_{save_name}.parquet"
-    summary_ddf = dd.read_parquet(summary_path, engine="pyarrow")
-    summary_ddf = summary_ddf.persist()
-    summary_ddf.info(memory_usage=True)
-    logging.info("Summary loaded")
-    start_date_map = {
-        s["game_id"]: s["start_date"] for s in summary_ddf.compute().to_dict("records")
-    }
-    logging.info("Start date map created")
-
-    base_dir = f"{data_folder}/{save_name}/odds_ts_{save_name}/partitions"
-    i = 0
-    start_time = time.perf_counter()
-    for root_path, dirs, files in os.walk(base_dir):
-        total_files = len(dirs)
-        for dir in dirs:
-            if dir.endswith(".parquet"):
-                start_time_internal = time.perf_counter()
-                file_path = os.path.join(root_path, dir)
-                logging.info(f"reading file: {file_path}")
-                ddf = dd.read_parquet(file_path, engine="pyarrow")
-                ddf = ddf.replace([np.nan], [None])
-                ddf = ddf.persist()
-                _process_file(
-                    ddf,
-                    start_date_map,
-                    file_index=i,
-                    save_name=save_name,
-                    output_folder=output_folder,
-                    find_opportunities_function=find_opportunities_function,
-                )
-                i += 1
-                logging.info(
-                    f"Processed batch {i}/{total_files} in {time.perf_counter() - start_time_internal} seconds"
-                )
-    logging.info(f"Processed all files in {time.perf_counter() - start_time} seconds")
-
-
-# Move the process_file_wrapper function to the top level
 def process_file_wrapper(args):
     (
         file_path,
@@ -253,24 +197,11 @@ def run_backtest(
     data_folder: str = "../data",
     output_folder: str = "../output",
     log_level: str | None = None,
-    parallel: bool = True,
     interval: int = 10,
 ):
     if log_level:
         root = logging.getLogger()
         root.setLevel(log_level)
-
-    if not parallel:
-        return run_backtest_old(
-            sports,
-            leagues,
-            start_date,
-            end_date,
-            find_opportunities_function,
-            data_folder,
-            output_folder,
-            log_level,
-        )
 
     save_name = gen_save_name(sports, leagues, start_date, end_date)
 
