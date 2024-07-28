@@ -53,8 +53,8 @@ def dict_to_oddts(record: dict) -> OddTs:
 
 def cache_odds(game_id, norm_market, odds, active_odds_by_game_id):
     for odd in odds:
-        norm_sportsbook = normalize_id(odd["sportsbook"])
-        norm_name = normalize_id(odd["name"])
+        norm_sportsbook = odd["normalized_sportsbook"]
+        norm_name = odd["normalized_name"]
         locked = odd.get("locked", False)
         if game_id not in active_odds_by_game_id:
             active_odds_by_game_id[game_id] = {}

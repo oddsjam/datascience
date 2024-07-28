@@ -52,11 +52,14 @@ def _process_file(
 
     parquet_file_index = 0
     last_timestamp = None  # last timestamp
-    # last_processed_timestamp = None  # last timestamp processed for opportunities
+    last_processed_timestamp = None  # last timestamp processed for opportunities
     num_processed_timestamps = 0  # how many timestamps have been processed
     grouped_data = defaultdict(list)
 
+    not_last_timestamp = False
+
     for i, record in enumerate(sorted_games_dict):
+        not_last_timestamp = i < len(sorted_games_dict) - 1
         current_timestamp = record["timestamp"]
 
         if i == 0:
@@ -68,7 +71,7 @@ def _process_file(
             grouped_data[(game_id, normalized_market)].append(record)
 
             # if it's the last record, process it
-            if i < len(sorted_games_dict) - 1:
+            if not_last_timestamp:
                 continue
 
         if current_timestamp < last_timestamp:
@@ -96,14 +99,19 @@ def _process_file(
                 f"Processing game {game_id} market {normalized_market} at {last_timestamp}"
             )
 
-            # if last_processed_timestamp is not None and is_difference_less_than_x_seconds(
-            #     last_processed_timestamp, last_timestamp, interval
-            # ):
-            #     continue
+            if (
+                last_processed_timestamp is not None
+                and is_difference_less_than_x_seconds(
+                    last_processed_timestamp,
+                    last_timestamp,
+                    interval and not_last_timestamp,
+                )
+            ):
+                continue
 
             tmp_opportunities = find_opportunities_function(odds_to_check)
             opportunities.extend(tmp_opportunities)
-            # last_processed_timestamp = last_timestamp
+            last_processed_timestamp = last_timestamp
         logging.debug(
             f"Processed all odd in {time.perf_counter() - start_time_timestamp} seconds"
         )
@@ -212,6 +220,7 @@ def process_file_wrapper(args):
         find_opportunities_function,
         log_queue,
         log_level,
+        interval,
     ) = args
 
     if not log_level:
@@ -231,6 +240,7 @@ def process_file_wrapper(args):
         save_name,
         i,
         find_opportunities_function,
+        interval=interval,
     )
 
 
@@ -244,6 +254,7 @@ def run_backtest(
     output_folder: str = "../output",
     log_level: str | None = None,
     parallel: bool = True,
+    interval: int = 10,
 ):
     if log_level:
         root = logging.getLogger()
@@ -298,6 +309,7 @@ def run_backtest(
                 find_opportunities_function,
                 log_queue,
                 log_level,
+                interval,
             )
             for i, file_path in enumerate(file_paths)
         ]
