@@ -4,12 +4,12 @@ import time
 from collections import defaultdict
 from datetime import datetime
 from logging.handlers import QueueHandler, QueueListener
-from multiprocessing import Manager, Pool
 from typing import Callable
 
 import dask
 import dask.dataframe as dd
 import pandas as pd
+from multiprocess import Manager, Pool
 
 from .utils import cache_odds, clean_old_games, dict_items_generator, gen_save_name
 
