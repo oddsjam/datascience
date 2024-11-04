@@ -11,7 +11,7 @@ import dask
 import dask.dataframe as dd
 import pandas as pd
 
-from .utils import cache_odds, clean_old_games, dict_items_generator, gen_save_name
+from .utils import cache_odds, clean_old_games, dict_items_generator, gen_save_name, normalize_id
 
 dask.config.set({"optimization.fuse.active": True})
 
@@ -45,8 +45,15 @@ def _process_file(
     game_id_by_start_time: dict[float, set[int]] = {}
     timestamps = sorted(games_ddf["timestamp"].unique().compute())
     logging.debug(f"Found {len(timestamps)} timestamps")
-
-    games_dict = games_ddf.compute().to_dict("records")
+    games_df_computed = games_ddf.compute()
+    # Uncomment below line when you want to run on a subset
+    # games_df_computed = games_df_computed.iloc[:10000, :]
+    games_df_computed = games_df_computed[games_df_computed['name'].notna()]
+    games_df_computed = games_df_computed[games_df_computed['market'].notna()]
+    games_df_computed['normalized_market'] = games_df_computed['market'].apply(normalize_id)
+    games_df_computed['normalized_sportsbook'] = games_df_computed['sportsbook'].apply(normalize_id)
+    games_df_computed['normalized_name'] = games_df_computed['name'].apply(normalize_id)
+    games_dict = games_df_computed.to_dict("records")
     sorted_games_dict = sorted(games_dict, key=lambda x: x["timestamp"])
 
     parquet_file_index = 0
@@ -138,13 +145,14 @@ def _process_file(
             logging.info(f"Analysed {i+1}/{len(sorted_games_dict)} odds")
         if i == len(sorted_games_dict) - 1:
             logging.info(f"Analysed {i+1}/{len(sorted_games_dict)} odds")
-        if len(opportunities) >= 2500000 or i == len(sorted_games_dict) - 1:
+        if len(opportunities) >= 2 or i == len(sorted_games_dict) - 1:
             logging.info("Writing to parquet file")
             oppo_ddf = dd.from_pandas(pd.DataFrame(opportunities), chunksize=500000)
             oppo_ddf.to_parquet(
                 f"{output_folder}/{save_name}/opportunities_{save_name}/partitions/file_{file_index}_batch_{parquet_file_index}.parquet",
                 engine="pyarrow",
             )
+            oppo_ddf.compute().to_csv(f'out_oppo_{parquet_file_index}.csv')
             del oppo_ddf
             opportunities = []
             parquet_file_index += 1
@@ -162,7 +170,6 @@ def process_file_wrapper(args):
         output_folder,
         save_name,
         find_opportunities_function,
-        log_queue,
         log_level,
         interval,
     ) = args
@@ -173,8 +180,8 @@ def process_file_wrapper(args):
     # Configure logging for the worker process
     logger = logging.getLogger()
     logger.setLevel(log_level)
-    handler = QueueHandler(log_queue)
-    logger.addHandler(handler)
+    # handler = QueueHandler(log_queue)
+    # logger.addHandler(handler)
 
     ddf = dd.read_parquet(file_path, engine="pyarrow")
     _process_file(
@@ -211,6 +218,9 @@ def run_backtest(
     summary_ddf = summary_ddf.persist()
     summary_ddf.info(memory_usage=True)
     logging.info("Summary loaded")
+    
+    # Start date map with game against its start date
+    # We only load pre game bets 
     start_date_map = {
         s["game_id"]: s["start_date"] for s in summary_ddf.compute().to_dict("records")
     }
@@ -224,29 +234,29 @@ def run_backtest(
                 file_paths.append(os.path.join(root_path, dir))
 
     start_time = time.perf_counter()
-    with Manager() as manager:
-        log_queue = manager.Queue()
-        handler = logging.StreamHandler()
-        listener = QueueListener(log_queue, handler)
-        listener.start()
+    # with Manager() as manager:
+        # log_queue = manager.Queue()
+        # handler = logging.StreamHandler()
+        # listener = QueueListener(log_queue, handler)
+        # listener.start()
 
-        args = [
-            (
-                file_path,
-                i,
-                start_date_map,
-                output_folder,
-                save_name,
-                find_opportunities_function,
-                log_queue,
-                log_level,
-                interval,
-            )
-            for i, file_path in enumerate(file_paths)
-        ]
-        with Pool() as pool:
-            pool.map(process_file_wrapper, args)
+    args = [
+        (
+            file_path,
+            i,
+            start_date_map,
+            output_folder,
+            save_name,
+            find_opportunities_function,
+            log_level,
+            interval,
+        )
+        for i, file_path in enumerate(file_paths)
+    ]
+        # Running sequentially for debugging
+    for argument in args:
+        process_file_wrapper(argument)
 
-        listener.stop()
+    # listener.stop()
 
     logging.info(f"Processed all files in {time.perf_counter() - start_time} seconds")

@@ -38,7 +38,7 @@ filter_and_convert_delayed = dask.delayed(filter_and_convert)
 def dict_to_oddts(record: dict) -> OddTs:
     odd = dict()
     for key, value in record.items():
-        if key in ["locked"]:
+        if key in ["locked", "desired", "grade", "clv_is_main", "olv_is_main", "outcome"]:
             continue
         if key == "main":
             odd["is_main"] = value
