@@ -47,7 +47,7 @@ def _process_file(
     logging.debug(f"Found {len(timestamps)} timestamps")
     games_df_computed = games_ddf.compute()
     # Uncomment below line when you want to run on a subset
-    # games_df_computed = games_df_computed.iloc[:10000, :]
+    # games_df_computed = games_df_computed.iloc[:20000, :]
     games_df_computed = games_df_computed[games_df_computed['name'].notna()]
     games_df_computed = games_df_computed[games_df_computed['market'].notna()]
     games_df_computed['normalized_market'] = games_df_computed['market'].apply(normalize_id)
@@ -145,14 +145,14 @@ def _process_file(
             logging.info(f"Analysed {i+1}/{len(sorted_games_dict)} odds")
         if i == len(sorted_games_dict) - 1:
             logging.info(f"Analysed {i+1}/{len(sorted_games_dict)} odds")
-        if len(opportunities) >= 2 or i == len(sorted_games_dict) - 1:
+        if (len(opportunities) >= 1000 or i == len(sorted_games_dict) - 1) and (len(opportunities)>0):
             logging.info("Writing to parquet file")
             oppo_ddf = dd.from_pandas(pd.DataFrame(opportunities), chunksize=500000)
             oppo_ddf.to_parquet(
                 f"{output_folder}/{save_name}/opportunities_{save_name}/partitions/file_{file_index}_batch_{parquet_file_index}.parquet",
                 engine="pyarrow",
             )
-            oppo_ddf.compute().to_csv(f'out_oppo_{parquet_file_index}.csv')
+            #oppo_ddf.compute().to_csv(f'out_oppo_{parquet_file_index}.csv')
             del oppo_ddf
             opportunities = []
             parquet_file_index += 1
@@ -184,6 +184,7 @@ def process_file_wrapper(args):
     # logger.addHandler(handler)
 
     ddf = dd.read_parquet(file_path, engine="pyarrow")
+
     _process_file(
         ddf,
         start_date_map,
