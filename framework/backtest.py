@@ -54,8 +54,8 @@ def _process_file(
     games_df_computed['normalized_sportsbook'] = games_df_computed['sportsbook'].apply(normalize_id)
     games_df_computed['normalized_name'] = games_df_computed['name'].apply(normalize_id)
     games_dict = games_df_computed.to_dict("records")
-    sorted_games_dict = sorted(games_dict, key=lambda x: x["timestamp"])
-
+    sorted_games_dict = sorted(games_dict, key=lambda x: x["timestamp"])[:5000]
+    # return sorted_games_dict
     parquet_file_index = 0
     last_timestamp = None  # last timestamp
     last_processed_timestamp = None  # last timestamp processed for opportunities
@@ -65,6 +65,8 @@ def _process_file(
     not_last_timestamp = False
 
     for i, record in enumerate(sorted_games_dict):
+        if i%1000==0:
+            print(i, len(sorted_games_dict))
         not_last_timestamp = i < len(sorted_games_dict) - 1
         current_timestamp = record["timestamp"]
 
@@ -145,7 +147,7 @@ def _process_file(
             logging.info(f"Analysed {i+1}/{len(sorted_games_dict)} odds")
         if i == len(sorted_games_dict) - 1:
             logging.info(f"Analysed {i+1}/{len(sorted_games_dict)} odds")
-        if (len(opportunities) >= 1000 or i == len(sorted_games_dict) - 1) and (len(opportunities)>0):
+        if len(opportunities) >= 100 or i == len(sorted_games_dict) - 1:
             logging.info("Writing to parquet file")
             oppo_ddf = dd.from_pandas(pd.DataFrame(opportunities), chunksize=500000)
             oppo_ddf.to_parquet(
@@ -194,6 +196,7 @@ def process_file_wrapper(args):
         find_opportunities_function,
         interval=interval,
     )
+    # return x
 
 
 def run_backtest(
