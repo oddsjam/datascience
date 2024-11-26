@@ -50,12 +50,9 @@ def _process_file(
     # games_df_computed = games_df_computed.iloc[:20000, :]
     games_df_computed = games_df_computed[games_df_computed['name'].notna()]
     games_df_computed = games_df_computed[games_df_computed['market'].notna()]
-    games_df_computed['normalized_market'] = games_df_computed['market'].apply(normalize_id)
-    games_df_computed['normalized_sportsbook'] = games_df_computed['sportsbook'].apply(normalize_id)
-    games_df_computed['normalized_name'] = games_df_computed['name'].apply(normalize_id)
     games_dict = games_df_computed.to_dict("records")
-    sorted_games_dict = sorted(games_dict, key=lambda x: x["timestamp"])[:5000]
-    # return sorted_games_dict
+    sorted_games_dict = sorted(games_dict, key=lambda x: x["timestamp"])
+
     parquet_file_index = 0
     last_timestamp = None  # last timestamp
     last_processed_timestamp = None  # last timestamp processed for opportunities
@@ -65,8 +62,6 @@ def _process_file(
     not_last_timestamp = False
 
     for i, record in enumerate(sorted_games_dict):
-        if i%1000==0:
-            print(i, len(sorted_games_dict))
         not_last_timestamp = i < len(sorted_games_dict) - 1
         current_timestamp = record["timestamp"]
 
