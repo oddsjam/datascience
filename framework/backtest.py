@@ -8,10 +8,10 @@ from multiprocessing import Manager, Pool
 from typing import Callable
 
 import dask
-import dask.dataframe as dd
 import pandas as pd
 
-from .utils import cache_odds, clean_old_games, dict_items_generator, gen_save_name, normalize_id
+from .utils import (cache_odds, clean_old_games, dict_items_generator,
+                    gen_save_name)
 
 dask.config.set({"optimization.fuse.active": True})
 
@@ -43,13 +43,13 @@ def _process_file(
     opportunities = []
     active_odds_by_game_id: dict[int, dict[str, dict[str, dict[str, float]]]] = {}
     game_id_by_start_time: dict[float, set[int]] = {}
-    timestamps = sorted(games_ddf["timestamp"].unique().compute())
+    timestamps = sorted(games_ddf["timestamp"].unique())
     logging.debug(f"Found {len(timestamps)} timestamps")
-    games_df_computed = games_ddf.compute()
+    games_df_computed = games_ddf
     # Uncomment below line when you want to run on a subset
     # games_df_computed = games_df_computed.iloc[:20000, :]
-    games_df_computed = games_df_computed[games_df_computed['name'].notna()]
-    games_df_computed = games_df_computed[games_df_computed['market'].notna()]
+    games_df_computed = games_df_computed[games_df_computed["name"].notna()]
+    games_df_computed = games_df_computed[games_df_computed["market"].notna()]
     games_dict = games_df_computed.to_dict("records")
     sorted_games_dict = sorted(games_dict, key=lambda x: x["timestamp"])
 
@@ -62,6 +62,8 @@ def _process_file(
     not_last_timestamp = False
 
     for i, record in enumerate(sorted_games_dict):
+        if i % 1000 == 0:
+            logging.info(f"{i} {len(sorted_games_dict)}")
         not_last_timestamp = i < len(sorted_games_dict) - 1
         current_timestamp = record["timestamp"]
 
@@ -81,7 +83,7 @@ def _process_file(
             raise ValueError("Timestamps are not sorted")
 
         start_time_timestamp = time.perf_counter()
-        for j, (key, odds) in enumerate(dict_items_generator(grouped_data)):
+        for _, (key, odds) in enumerate(dict_items_generator(grouped_data)):
             game_id, normalized_market = key
             start_date = start_date_map[game_id]
             start_date_ts = datetime.fromisoformat(start_date).timestamp()
@@ -142,14 +144,18 @@ def _process_file(
             logging.info(f"Analysed {i+1}/{len(sorted_games_dict)} odds")
         if i == len(sorted_games_dict) - 1:
             logging.info(f"Analysed {i+1}/{len(sorted_games_dict)} odds")
-        if len(opportunities) >= 100 or i == len(sorted_games_dict) - 1:
+        if len(opportunities) > 0 and (
+            len(opportunities) >= 100 or i == len(sorted_games_dict) - 1
+        ):
             logging.info("Writing to parquet file")
-            oppo_ddf = dd.from_pandas(pd.DataFrame(opportunities), chunksize=500000)
-            oppo_ddf.to_parquet(
-                f"{output_folder}/{save_name}/opportunities_{save_name}/partitions/file_{file_index}_batch_{parquet_file_index}.parquet",
-                engine="pyarrow",
+            oppo_ddf = pd.DataFrame(opportunities)
+            os.makedirs(
+                f"{output_folder}/{save_name}/opportunities_{save_name}/partitions/",
+                exist_ok=True,
             )
-            #oppo_ddf.compute().to_csv(f'out_oppo_{parquet_file_index}.csv')
+            oppo_ddf.to_parquet(
+                f"{output_folder}/{save_name}/opportunities_{save_name}/partitions/file_{file_index}_batch_{parquet_file_index}.parquet"
+            )
             del oppo_ddf
             opportunities = []
             parquet_file_index += 1
@@ -167,6 +173,7 @@ def process_file_wrapper(args):
         output_folder,
         save_name,
         find_opportunities_function,
+        log_queue,
         log_level,
         interval,
     ) = args
@@ -177,10 +184,10 @@ def process_file_wrapper(args):
     # Configure logging for the worker process
     logger = logging.getLogger()
     logger.setLevel(log_level)
-    # handler = QueueHandler(log_queue)
-    # logger.addHandler(handler)
+    handler = QueueHandler(log_queue)
+    logger.addHandler(handler)
 
-    ddf = dd.read_parquet(file_path, engine="pyarrow")
+    ddf = pd.read_parquet(file_path)
 
     _process_file(
         ddf,
@@ -191,7 +198,6 @@ def process_file_wrapper(args):
         find_opportunities_function,
         interval=interval,
     )
-    # return x
 
 
 def run_backtest(
@@ -204,6 +210,8 @@ def run_backtest(
     output_folder: str = "../output",
     log_level: str | None = None,
     interval: int = 10,
+    run_multiprocessing: bool = False,
+    num_processes: int = 5,
 ):
     if log_level:
         root = logging.getLogger()
@@ -213,15 +221,14 @@ def run_backtest(
 
     # Read summary
     summary_path = f"{data_folder}/{save_name}/odds_summary_{save_name}.parquet"
-    summary_ddf = dd.read_parquet(summary_path, engine="pyarrow")
-    summary_ddf = summary_ddf.persist()
+    summary_ddf = pd.read_parquet(summary_path)
     summary_ddf.info(memory_usage=True)
     logging.info("Summary loaded")
-    
+
     # Start date map with game against its start date
-    # We only load pre game bets 
+    # We only load pre game bets
     start_date_map = {
-        s["game_id"]: s["start_date"] for s in summary_ddf.compute().to_dict("records")
+        s["game_id"]: s["start_date"] for s in summary_ddf.to_dict("records")
     }
     logging.info("Start date map created")
 
@@ -233,29 +240,37 @@ def run_backtest(
                 file_paths.append(os.path.join(root_path, dir))
 
     start_time = time.perf_counter()
-    # with Manager() as manager:
-        # log_queue = manager.Queue()
-        # handler = logging.StreamHandler()
-        # listener = QueueListener(log_queue, handler)
-        # listener.start()
 
-    args = [
-        (
-            file_path,
-            i,
-            start_date_map,
-            output_folder,
-            save_name,
-            find_opportunities_function,
-            log_level,
-            interval,
-        )
-        for i, file_path in enumerate(file_paths)
-    ]
-        # Running sequentially for debugging
-    for argument in args:
-        process_file_wrapper(argument)
+    with Manager() as manager:
+        log_queue = manager.Queue()
+        handler = logging.StreamHandler()
+        listener = QueueListener(log_queue, handler)
+        listener.start()
 
-    # listener.stop()
+        args = [
+            (
+                file_path,
+                i,
+                start_date_map,
+                output_folder,
+                save_name,
+                find_opportunities_function,
+                log_queue,
+                log_level,
+                interval,
+            )
+            for i, file_path in enumerate(file_paths)
+        ]
+
+        if run_multiprocessing:
+            logging.info("Running with multiprocessing")
+            with Pool(num_processes) as pool:
+                pool.map(process_file_wrapper, args)
+        else:
+            logging.info("Running with single process")
+            for argument in args:
+                process_file_wrapper(argument)
+
+        listener.stop()
 
     logging.info(f"Processed all files in {time.perf_counter() - start_time} seconds")

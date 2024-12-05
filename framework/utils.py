@@ -38,7 +38,14 @@ filter_and_convert_delayed = dask.delayed(filter_and_convert)
 def dict_to_oddts(record: dict) -> OddTs:
     odd = dict()
     for key, value in record.items():
-        if key in ["locked", "desired", "grade", "clv_is_main", "olv_is_main", "outcome"]:
+        if key in [
+            "locked",
+            "desired",
+            "grade",
+            "clv_is_main",
+            "olv_is_main",
+            "outcome",
+        ]:
             continue
         if key == "main":
             odd["is_main"] = value
@@ -72,9 +79,9 @@ def cache_odds(game_id, norm_market, odds, active_odds_by_game_id):
         if locked:
             del active_odds_by_game_id[game_id][norm_market][norm_sportsbook][norm_name]
         else:
-            active_odds_by_game_id[game_id][norm_market][norm_sportsbook][
-                norm_name
-            ] = dict_to_oddts(odd)
+            active_odds_by_game_id[game_id][norm_market][norm_sportsbook][norm_name] = (
+                dict_to_oddts(odd)
+            )
 
 
 def clean_old_games(game_id_by_start_time, active_odds_by_game_id, timestamp):
