@@ -9,9 +9,10 @@ from typing import Callable
 
 import dask
 import pandas as pd
+import glob
+import numpy as np
 
-from .utils import (cache_odds, clean_old_games, dict_items_generator,
-                    gen_save_name)
+from .utils import cache_odds, clean_old_games, dict_items_generator, gen_save_name, normalize_id
 
 dask.config.set({"optimization.fuse.active": True})
 
@@ -30,6 +31,89 @@ def is_difference_less_than_x_seconds(timestamp1, timestamp2, x=10):
 
     return difference.total_seconds() < x
 
+def load_odds_df(data_folder, save_name, bet_type='moneyline'):
+    """Loading odds for the particular game.
+    
+    Args:
+        data_folder: path to data folder
+        save_name: name of the folder in the data folder
+        bet_type: type of bet to store
+
+    Return:
+        pd.Dataframe containing all the odds for the particular game. 
+    """
+    odds_ddf = pd.DataFrame()
+    odds_file_path = f"{data_folder}/{save_name}/odds_ts_{save_name}/partitions/*"
+    odds_files = glob.glob(odds_file_path)
+    for file in odds_files:
+        ddf = pd.read_parquet(file)
+        ddf = ddf.replace([np.nan], [None])
+        odds_ddf = pd.concat([odds_ddf, ddf])
+    odds_df = odds_ddf
+    odds_df = odds_df[odds_df['normalized_market'] == bet_type]
+    odds_df['normalized_sportsbook'] = odds_df['sportsbook'].apply(lambda x:normalize_id(x))
+    return odds_df
+
+def load_odds_df_range(data_folder, sports, leagues, start_dates, end_dates, bet_type='moneyline'):
+    """Loading odds for all the games in start and end dates.
+
+    Args:
+        data_folder: path to data folder
+        sports: name of sport
+        leagues: name of league
+        start_dates: list of start dates
+        end_dates: list of end dates
+        bet_type: type of bet to store
+
+    Return:
+        pd.Dataframe containing all the odds for all games concatenated. 
+    """
+    odds_df = pd.DataFrame()
+    for start_date, end_date in zip(start_dates, end_dates):
+        save_name = gen_save_name(sports, leagues, start_date, end_date)
+        df = load_odds_df(data_folder, save_name, bet_type)
+        odds_df = pd.concat([odds_df, df], axis=0)
+    
+    return odds_df
+
+def load_summary_df_range(data_folder, sports, leagues, start_dates, end_dates):
+    """Loading odds for all the games in start and end dates.
+
+    Args:
+        data_folder: path to data folder
+        sports: name of sport
+        leagues: name of league
+        start_dates: list of start dates
+        end_dates: list of end dates
+
+    Return:
+        pd.Dataframe containing all the summary data for all games concatenated. 
+    """
+    summary_df = pd.DataFrame()
+    for start_date, end_date in zip(start_dates, end_dates):
+        save_name = gen_save_name(sports, leagues, start_date, end_date)
+        summary_path = f"{data_folder}/{save_name}/odds_summary_{save_name}.parquet"
+        df = pd.read_parquet(summary_path)
+        summary_df = pd.concat([summary_df, df])
+    return summary_df
+
+
+def divide_odds_game_id(odds_df):
+    """Divide odds df into list of dataframes containing odds for individual games.
+
+    Args:
+    odds_df: Dataframe containing odds for all the games.
+
+    Return:
+    List of dataframe divided by game_id.
+    """
+    logging.info(f"num_games {len(odds_df['game_id'].unique())}")
+    grouped = odds_df.groupby(by='game_id')
+    games_ddf = []
+    for _, group in grouped:
+        games_ddf += [group]
+    return games_ddf
+
 
 def _process_file(
     games_ddf,
@@ -40,6 +124,7 @@ def _process_file(
     find_opportunities_function,
     interval=10,  # Run find_opportunities_function every 'interval' seconds
 ):
+    logging.info('Starting.......')
     opportunities = []
     active_odds_by_game_id: dict[int, dict[str, dict[str, dict[str, float]]]] = {}
     game_id_by_start_time: dict[float, set[int]] = {}
@@ -48,8 +133,9 @@ def _process_file(
     games_df_computed = games_ddf
     # Uncomment below line when you want to run on a subset
     # games_df_computed = games_df_computed.iloc[:20000, :]
-    games_df_computed = games_df_computed[games_df_computed["name"].notna()]
-    games_df_computed = games_df_computed[games_df_computed["market"].notna()]
+    games_df_computed = games_df_computed[games_df_computed['name'].notna()]
+    games_df_computed = games_df_computed[games_df_computed['market'].notna()]
+    games_df_computed = games_df_computed[games_df_computed['normalized_market'] == 'total_points'][games_df_computed['clv_is_main'] == True]
     games_dict = games_df_computed.to_dict("records")
     sorted_games_dict = sorted(games_dict, key=lambda x: x["timestamp"])
 
@@ -62,7 +148,7 @@ def _process_file(
     not_last_timestamp = False
 
     for i, record in enumerate(sorted_games_dict):
-        if i % 1000 == 0:
+        if i%1000 == 0:
             logging.info(f"{i} {len(sorted_games_dict)}")
         not_last_timestamp = i < len(sorted_games_dict) - 1
         current_timestamp = record["timestamp"]
@@ -83,7 +169,7 @@ def _process_file(
             raise ValueError("Timestamps are not sorted")
 
         start_time_timestamp = time.perf_counter()
-        for _, (key, odds) in enumerate(dict_items_generator(grouped_data)):
+        for j, (key, odds) in enumerate(dict_items_generator(grouped_data)):
             game_id, normalized_market = key
             start_date = start_date_map[game_id]
             start_date_ts = datetime.fromisoformat(start_date).timestamp()
@@ -144,18 +230,14 @@ def _process_file(
             logging.info(f"Analysed {i+1}/{len(sorted_games_dict)} odds")
         if i == len(sorted_games_dict) - 1:
             logging.info(f"Analysed {i+1}/{len(sorted_games_dict)} odds")
-        if len(opportunities) > 0 and (
-            len(opportunities) >= 100 or i == len(sorted_games_dict) - 1
-        ):
+        if len(opportunities)>0 and (len(opportunities) >= 100 or i == len(sorted_games_dict) - 1):
             logging.info("Writing to parquet file")
             oppo_ddf = pd.DataFrame(opportunities)
-            os.makedirs(
-                f"{output_folder}/{save_name}/opportunities_{save_name}/partitions/",
-                exist_ok=True,
-            )
+            os.makedirs(f"{output_folder}/{save_name}/opportunities_{save_name}/partitions/", exist_ok=True)
             oppo_ddf.to_parquet(
                 f"{output_folder}/{save_name}/opportunities_{save_name}/partitions/file_{file_index}_batch_{parquet_file_index}.parquet"
             )
+            #oppo_ddf.to_csv(f'out_oppo_{parquet_file_index}.csv')
             del oppo_ddf
             opportunities = []
             parquet_file_index += 1
@@ -167,7 +249,7 @@ def _process_file(
 
 def process_file_wrapper(args):
     (
-        file_path,
+        ddf,
         i,
         start_date_map,
         output_folder,
@@ -187,7 +269,7 @@ def process_file_wrapper(args):
     handler = QueueHandler(log_queue)
     logger.addHandler(handler)
 
-    ddf = pd.read_parquet(file_path)
+    # ddf = pd.read_parquet(file_path)
 
     _process_file(
         ddf,
@@ -199,12 +281,12 @@ def process_file_wrapper(args):
         interval=interval,
     )
 
-
 def run_backtest(
     sports: list[str],
     leagues: list[str],
-    start_date: str,
-    end_date: str,
+    bet_type: str,
+    start_dates: str,
+    end_dates: str,
     find_opportunities_function: Callable = lambda odds: [],
     data_folder: str = "../data",
     output_folder: str = "../output",
@@ -217,29 +299,24 @@ def run_backtest(
         root = logging.getLogger()
         root.setLevel(log_level)
 
-    save_name = gen_save_name(sports, leagues, start_date, end_date)
 
-    # Read summary
-    summary_path = f"{data_folder}/{save_name}/odds_summary_{save_name}.parquet"
-    summary_ddf = pd.read_parquet(summary_path)
+    summary_ddf = load_summary_df_range(data_folder, sports, leagues, start_dates, end_dates)
+    # summary_ddf = summary_ddf.persist()
     summary_ddf.info(memory_usage=True)
     logging.info("Summary loaded")
-
+    
     # Start date map with game against its start date
-    # We only load pre game bets
+    # We only load pre game bets 
     start_date_map = {
         s["game_id"]: s["start_date"] for s in summary_ddf.to_dict("records")
     }
     logging.info("Start date map created")
 
-    base_dir = f"{data_folder}/{save_name}/odds_ts_{save_name}/partitions"
-    file_paths = []
-    for root_path, dirs, _ in os.walk(base_dir):
-        for dir in dirs:
-            if dir.endswith(".parquet"):
-                file_paths.append(os.path.join(root_path, dir))
-
+    save_name = gen_save_name(sports, leagues, start_date=min(start_dates), end_date=max(end_dates))
     start_time = time.perf_counter()
+
+    odds_df = load_odds_df_range(data_folder, sports, leagues, start_dates, end_dates, bet_type)
+    games_df = divide_odds_game_id(odds_df)
 
     with Manager() as manager:
         log_queue = manager.Queue()
@@ -249,7 +326,7 @@ def run_backtest(
 
         args = [
             (
-                file_path,
+                ddf,
                 i,
                 start_date_map,
                 output_folder,
@@ -259,9 +336,9 @@ def run_backtest(
                 log_level,
                 interval,
             )
-            for i, file_path in enumerate(file_paths)
+            for i, ddf in enumerate(games_df)
         ]
-
+        logging.info(f"num_args {len(args)}")
         if run_multiprocessing:
             logging.info("Running with multiprocessing")
             with Pool(num_processes) as pool:
@@ -272,5 +349,6 @@ def run_backtest(
                 process_file_wrapper(argument)
 
         listener.stop()
+
 
     logging.info(f"Processed all files in {time.perf_counter() - start_time} seconds")
