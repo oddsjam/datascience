@@ -79,9 +79,12 @@ def cache_odds(game_id, norm_market, odds, active_odds_by_game_id):
         if locked:
             del active_odds_by_game_id[game_id][norm_market][norm_sportsbook][norm_name]
         else:
-            active_odds_by_game_id[game_id][norm_market][norm_sportsbook][norm_name] = (
-                dict_to_oddts(odd)
-            )
+            for k in ["olv_is_main", "clv_is_main", "grade", "desired", "outcome"]:
+                odd.pop(k, None)
+
+            active_odds_by_game_id[game_id][norm_market][norm_sportsbook][
+                norm_name
+            ] = dict_to_oddts(odd)
 
 
 def clean_old_games(game_id_by_start_time, active_odds_by_game_id, timestamp):
