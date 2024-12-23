@@ -15,6 +15,7 @@ notebook = "^7.2.1"
 dask = {extras = ["dataframe"], version = "^2024.6.2"}
 pre-commit = "^3.7.1"
 mypy = "^1.10.1"
+multiprocess = "^0.70.17"
 
 
 [build-system]

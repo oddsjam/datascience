@@ -161,7 +161,7 @@ def _process_file(
             normalized_market = record["normalized_market"]
             grouped_data[(game_id, normalized_market)].append(record)
 
-            # if it's the last record, process it
+            # if it's the last record, process it otherwise skip it
             if not_last_timestamp:
                 continue
 
@@ -199,8 +199,9 @@ def _process_file(
                 )
                 and not_last_timestamp
             ):
+                logging.debug("skipping find_opportunities_function")
                 continue
-
+            logging.debug("running find_opportunities_function")
             tmp_opportunities = find_opportunities_function(odds_to_check)
             opportunities.extend(tmp_opportunities)
             last_processed_timestamp = last_timestamp
@@ -219,6 +220,7 @@ def _process_file(
             )
 
         # reset after processing
+        logging.debug("Reset after processing")
         last_timestamp = current_timestamp
         num_processed_timestamps += 1
         grouped_data = defaultdict(list)
