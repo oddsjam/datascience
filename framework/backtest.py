@@ -136,7 +136,7 @@ def _process_file(
     save_name,
     file_index,
     find_opportunities_function,
-    interval=10,  # Run find_opportunities_function every 'interval' seconds
+    interval=100,  # Run find_opportunities_function every 'interval' seconds
 ):
     logging.info("Starting.......")
     opportunities = []
@@ -147,10 +147,14 @@ def _process_file(
     games_df_computed = games_ddf
     # Uncomment below line when you want to run on a subset
     # games_df_computed = games_df_computed.iloc[:20000, :]
+    print(games_df_computed.columns)
     games_df_computed = games_df_computed[games_df_computed["name"].notna()]
     games_df_computed = games_df_computed[games_df_computed["market"].notna()]
+    games_df_computed = games_df_computed[games_df_computed["normalized_market"] == 'player_points']    
+    games_df_computed = games_df_computed[games_df_computed["price"] > -500]
+    games_df_computed = games_df_computed[games_df_computed["price"] < 500]
     games_dict = games_df_computed.to_dict("records")
-    sorted_games_dict = sorted(games_dict, key=lambda x: x["timestamp"])
+    sorted_games_dict = sorted(games_dict, key=lambda x: x["timestamp"])[:3000]
 
     parquet_file_index = 0
     last_timestamp = None  # last timestamp
