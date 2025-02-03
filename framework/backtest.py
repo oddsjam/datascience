@@ -7,7 +7,6 @@ from datetime import datetime
 from logging.handlers import QueueListener
 from multiprocessing import Manager, Pool
 from typing import Callable
-
 import dask
 import numpy as np
 import pandas as pd
@@ -38,7 +37,7 @@ def is_difference_less_than_x_seconds(timestamp1, timestamp2, x=10):
     return difference.total_seconds() < x
 
 
-def load_odds_df(data_folder, save_name, bet_type="moneyline"):
+def load_odds_df(data_folder, save_name, bet_type="moneyline", load_summary=False):
     """Loading odds for the particular game.
 
     Args:
@@ -50,7 +49,10 @@ def load_odds_df(data_folder, save_name, bet_type="moneyline"):
         pd.Dataframe containing all the odds for the particular game.
     """
     odds_ddf = pd.DataFrame()
-    odds_file_path = f"{data_folder}/{save_name}/odds_ts_{save_name}/partitions/*"
+    if load_summary:
+        odds_file_path = f"{data_folder}/{save_name}/odds_summary_{save_name}.parquet"
+    else:
+        odds_file_path = f"{data_folder}/{save_name}/odds_ts_{save_name}/partitions/*"
     odds_files = glob.glob(odds_file_path)
     for file in odds_files:
         ddf = pd.read_parquet(file)
@@ -61,11 +63,21 @@ def load_odds_df(data_folder, save_name, bet_type="moneyline"):
     odds_df["normalized_sportsbook"] = odds_df["sportsbook"].apply(
         lambda x: normalize_id(x)
     )
+    if load_summary:
+        odds_df["timestamp"] = odds_df["sportsbook"].apply(lambda x:int(datetime.now().timestamp()))
+        odds_df["main"] = odds_df["clv_is_main"]
+        odds_df["price"] = odds_df["clv_price"]
+        odds_df["points"] = odds_df["selection_points"]
+        odds_df = odds_df.drop(labels=['home_team', "away_team", "start_date", 
+                                    "player_id", "clv_price", "olv_price", 
+                                    "clv_points", "olv_points", "closed_at", 
+                                    "fixture_id", "opened_at", "processed"], axis=1)
+    
     return odds_df
 
 
 def load_odds_df_range(
-    data_folder, sports, leagues, start_dates, end_dates, bet_type="moneyline"
+    data_folder, sports, leagues, start_dates, end_dates, bet_type="moneyline", load_summary=False
 ):
     """Loading odds for all the games in start and end dates.
 
@@ -83,7 +95,7 @@ def load_odds_df_range(
     odds_df = pd.DataFrame()
     for start_date, end_date in zip(start_dates, end_dates):
         save_name = gen_save_name(sports, leagues, start_date, end_date)
-        df = load_odds_df(data_folder, save_name, bet_type)
+        df = load_odds_df(data_folder, save_name, bet_type, load_summary)
         odds_df = pd.concat([odds_df, df], axis=0)
 
     return odds_df
@@ -137,6 +149,8 @@ def _process_file(
     file_index,
     find_opportunities_function,
     interval=100,  # Run find_opportunities_function every 'interval' seconds
+    bet_type="moneyline",
+    price_constraint=500,
 ):
     logging.info("Starting.......")
     opportunities = []
@@ -147,14 +161,13 @@ def _process_file(
     games_df_computed = games_ddf
     # Uncomment below line when you want to run on a subset
     # games_df_computed = games_df_computed.iloc[:20000, :]
-    print(games_df_computed.columns)
     games_df_computed = games_df_computed[games_df_computed["name"].notna()]
     games_df_computed = games_df_computed[games_df_computed["market"].notna()]
-    games_df_computed = games_df_computed[games_df_computed["normalized_market"] == 'player_points']    
-    games_df_computed = games_df_computed[games_df_computed["price"] > -500]
-    games_df_computed = games_df_computed[games_df_computed["price"] < 500]
+    games_df_computed = games_df_computed[games_df_computed["normalized_market"] == bet_type]    
+    games_df_computed = games_df_computed[games_df_computed["price"] > -price_constraint]
+    games_df_computed = games_df_computed[games_df_computed["price"] < price_constraint]
     games_dict = games_df_computed.to_dict("records")
-    sorted_games_dict = sorted(games_dict, key=lambda x: x["timestamp"])[:3000]
+    sorted_games_dict = sorted(games_dict, key=lambda x: x["timestamp"])
 
     parquet_file_index = 0
     last_timestamp = None  # last timestamp
@@ -283,6 +296,8 @@ def process_file_wrapper(args):
         log_queue,
         log_level,
         interval,
+        bet_type,
+        price_constraint,
     ) = args
 
     if not log_level:
@@ -304,8 +319,19 @@ def process_file_wrapper(args):
         i,
         find_opportunities_function,
         interval=interval,
+        bet_type=bet_type,
+        price_constraint=price_constraint
     )
 
+def remove_already_calculated_games(output_folder, game_files):
+    if os.path.exists(output_folder):
+        already_calculated_files = os.listdir(output_folder)
+        already_calculated_games_count = [f.split('_')[1] for f in already_calculated_files]
+        print("Already calculated games found, removing to reduce redundant calculation: ", already_calculated_games_count)
+        if len(already_calculated_games_count) > 0:
+            filtered_game_files = [f for i, f in enumerate(game_files) if i not in already_calculated_games_count]
+        return filtered_game_files
+    return game_files
 
 def run_backtest(
     sports: list[str],
@@ -320,6 +346,8 @@ def run_backtest(
     interval: int = 10,
     run_multiprocessing: bool = False,
     num_processes: int = 5,
+    price_constraint = 500,
+    load_summary = False,
 ):
     if log_level:
         root = logging.getLogger()
@@ -345,7 +373,7 @@ def run_backtest(
     start_time = time.perf_counter()
 
     odds_df = load_odds_df_range(
-        data_folder, sports, leagues, start_dates, end_dates, bet_type
+        data_folder, sports, leagues, start_dates, end_dates, bet_type, load_summary
     )
     games_files = divide_odds_game_id(odds_df, bet_type)
 
@@ -355,6 +383,10 @@ def run_backtest(
         listener = QueueListener(log_queue, handler)
         listener.start()
 
+        filtered_games_files = remove_already_calculated_games(os.path.join(output_folder, 
+                                                                            save_name, 
+                                                                            f'opportunities_{save_name}', 
+                                                                            "partitions"), games_files)
         args = [
             (
                 game_file,
@@ -366,9 +398,12 @@ def run_backtest(
                 log_queue,
                 log_level,
                 interval,
+                bet_type,
+                price_constraint,
             )
-            for i, game_file in enumerate(games_files)
+            for i, game_file in enumerate(filtered_games_files)
         ]
+
         logging.info(f"num_args {len(args)}")
         if run_multiprocessing:
             logging.info("Running with multiprocessing")
