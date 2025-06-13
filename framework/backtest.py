@@ -11,7 +11,7 @@ import dask
 import dask.dataframe as dd
 import pandas as pd
 
-from .utils import cache_odds, clean_old_games, dict_items_generator, gen_save_name
+from .utils import cache_odds, clean_old_games, dict_items_generator, gen_save_name, dict_to_oddts, normalize_id
 
 dask.config.set({"optimization.fuse.active": True})
 
@@ -156,6 +156,77 @@ def _process_file(
         )
 
 
+NORMALIZED_SPORTSBOOKS_TO_EXCLUDE = {
+    "circa_vegas", # the closing line price is messed up
+    "draftkings_pick_6_multipliers_", # this book isn't used on the tools right now
+    "parlaye", # this book isn't used on the tools right now
+    "underdog_fantasy_multipliers_", # this book isn't used on the tools right now
+    "epick", # this book isn't used on the tools right now
+    "suprabets", # this book isn't used on the tools right now
+    "juicebet", # this book isn't used on the tools right now
+    "dafabet", # this book isn't used on the tools right now
+    "dazn_bet", # this book isn't used on the tools right now
+    "blue_book", # this is a clone of FD
+}
+
+
+def _process_file_from_summary(
+    summary_ddf,
+    output_folder,
+    find_opportunities_function,
+    log_level,
+    save_name,
+    allowed_normalized_markets = set()
+):
+    opportunities = []
+    parquet_file_index = 0
+    
+    if allowed_normalized_markets:
+        summary_ddf = summary_ddf[summary_ddf['normalized_market'].isin(allowed_normalized_markets)]
+
+    num_combinations = summary_ddf[['game_id', 'normalized_market']].drop_duplicates().shape[0].compute()
+
+    summary_df = summary_ddf.compute()
+    grouped = summary_df.groupby(['game_id', 'normalized_market'])
+    i = 0
+    for (game_id, normalized_market), group_data in grouped:
+        # Convert group data to list of dictionaries (odds records)
+        odds_list = group_data.to_dict('records')
+        odds = []
+        for odd in odds_list:
+            odd["points"] = odd.pop("olv_points", None)
+            for k in ["olv_is_main", "clv_is_main", "grade", "desired", "outcome", "home_team", "away_team", "player_id", "clv_points", "olv_price", "olv_points", "opened_at", "fixture_id", "processed", "closed_at"]:
+                odd.pop(k, None)
+            odd["timestamp"] = odd.pop("start_date").to_pydatetime().timestamp()
+            odd["price"] = odd.pop("clv_price", None)
+            for k, v in odd.items():
+                if pd.isna(v):
+                    odd[k] = None
+            if odd["price"] is None:
+                continue
+            # exclude circa vegas, because the closing line price is messed up
+            normalized_sportsbook = normalize_id(odd["sportsbook"])
+            if normalized_sportsbook in NORMALIZED_SPORTSBOOKS_TO_EXCLUDE:
+                continue
+            odds.append(dict_to_oddts(odd))
+
+        opps = find_opportunities_function({ normalized_market: odds })
+        if opps:
+            opportunities.extend(opps)
+
+        if len(opportunities) >= 2500000 or i == num_combinations - 1:
+            logging.info("Writing to parquet file")
+            oppo_ddf = dd.from_pandas(pd.DataFrame(opportunities), chunksize=500000)
+            oppo_ddf.to_parquet(
+                f"{output_folder}/{save_name}/opportunities_{save_name}/partitions/file_0_batch_{parquet_file_index}.parquet",
+                engine="pyarrow",
+            )
+            del oppo_ddf
+            opportunities = []
+            parquet_file_index += 1
+        i += 1
+
+
 def process_file_wrapper(args):
     (
         file_path,
@@ -175,8 +246,9 @@ def process_file_wrapper(args):
     # Configure logging for the worker process
     logger = logging.getLogger()
     logger.setLevel(log_level)
-    handler = QueueHandler(log_queue)
-    logger.addHandler(handler)
+    if log_queue:
+        handler = QueueHandler(log_queue)
+        logger.addHandler(handler)
 
     ddf = dd.read_parquet(file_path, engine="pyarrow")
     _process_file(
@@ -187,6 +259,32 @@ def process_file_wrapper(args):
         i,
         find_opportunities_function,
         interval=interval,
+    )
+
+
+def process_file_wrapper_from_summary(args):
+    (
+        summary_ddf,
+        output_folder,
+        find_opportunities_function,
+        log_level,
+        save_name,
+        allowed_normalized_markets
+    ) = args
+
+    if not log_level:
+        log_level = "INFO"
+
+    logger = logging.getLogger()
+    logger.setLevel(log_level)
+
+    _process_file_from_summary(
+        summary_ddf,
+        output_folder,
+        find_opportunities_function,
+        log_level,
+        save_name,
+        allowed_normalized_markets
     )
 
 
@@ -250,5 +348,46 @@ def run_backtest(
             pool.map(process_file_wrapper, args)
 
         listener.stop()
+
+    logging.info(f"Processed all files in {time.perf_counter() - start_time} seconds")
+
+
+def run_backtest_from_summary(
+    sports: list[str],
+    leagues: list[str],
+    start_date: str,
+    end_date: str,
+    find_opportunities_function: Callable = lambda odds: [],
+    data_folder: str = "../data",
+    output_folder: str = "../output",
+    log_level: str | None = None,
+    allowed_normalized_markets: set[str] = set(),
+    game_id: str | None = None,
+):
+    if log_level:
+        root = logging.getLogger()
+        root.setLevel(log_level)
+
+    save_name = gen_save_name(sports, leagues, start_date, end_date)
+
+    # Read summary
+    summary_path = f"{data_folder}/{save_name}/odds_summary_{save_name}.parquet"
+    summary_ddf = dd.read_parquet(summary_path, engine="pyarrow")
+    summary_ddf = summary_ddf.persist()
+    if game_id:
+        summary_ddf = summary_ddf[summary_ddf['game_id'] == game_id]
+    summary_ddf.info(memory_usage=True)
+    logging.info("Summary loaded")
+
+
+    start_time = time.perf_counter()
+    process_file_wrapper_from_summary((
+        summary_ddf,
+        output_folder,
+        find_opportunities_function,
+        log_level,
+        save_name,
+        allowed_normalized_markets
+    ))
 
     logging.info(f"Processed all files in {time.perf_counter() - start_time} seconds")

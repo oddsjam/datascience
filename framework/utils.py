@@ -72,7 +72,7 @@ def cache_odds(game_id, norm_market, odds, active_odds_by_game_id):
         if locked:
             del active_odds_by_game_id[game_id][norm_market][norm_sportsbook][norm_name]
         else:
-            for k in ["olv_is_main", "clv_is_main", "grade", "desired", "outcome"]:
+            for k in ["olv_is_main", "clv_is_main", "grade", "desired", "outcome", "home_team", "away_team", "player_id", "olv_price", "olv_points", "clv_points", "opened_at", "fixture_id", "processed", "closed_at"]:
                 odd.pop(k, None)
 
             active_odds_by_game_id[game_id][norm_market][norm_sportsbook][
