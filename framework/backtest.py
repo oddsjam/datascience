@@ -141,7 +141,7 @@ def _process_file(
         if i == len(sorted_games_dict) - 1:
             logging.info(f"Analysed {i+1}/{len(sorted_games_dict)} odds")
         if len(opportunities) >= 2500000 or i == len(sorted_games_dict) - 1:
-            logging.info("Writing to parquet file")
+            # logging.info("Writing to parquet file")
             oppo_ddf = dd.from_pandas(pd.DataFrame(opportunities), chunksize=500000)
             oppo_ddf.to_parquet(
                 f"{output_folder}/{save_name}/opportunities_{save_name}/partitions/file_{file_index}_batch_{parquet_file_index}.parquet",
@@ -215,7 +215,7 @@ def _process_file_from_summary(
             opportunities.extend(opps)
 
         if len(opportunities) >= 2500000 or i == num_combinations - 1:
-            logging.info("Writing to parquet file")
+            # logging.info("Writing to parquet file")
             oppo_ddf = dd.from_pandas(pd.DataFrame(opportunities), chunksize=500000)
             oppo_ddf.to_parquet(
                 f"{output_folder}/{save_name}/opportunities_{save_name}/partitions/file_0_batch_{parquet_file_index}.parquet",
@@ -309,8 +309,7 @@ def run_backtest(
     summary_path = f"{data_folder}/{save_name}/odds_summary_{save_name}.parquet"
     summary_ddf = dd.read_parquet(summary_path, engine="pyarrow")
     summary_ddf = summary_ddf.persist()
-    summary_ddf.info(memory_usage=True)
-    logging.info("Summary loaded")
+    # logging.info("Summary loaded")
     start_date_map = {
         s["game_id"]: s["start_date"] for s in summary_ddf.compute().to_dict("records")
     }
@@ -349,7 +348,7 @@ def run_backtest(
 
         listener.stop()
 
-    logging.info(f"Processed all files in {time.perf_counter() - start_time} seconds")
+    # logging.info(f"Processed all files in {time.perf_counter() - start_time} seconds")
 
 
 def run_backtest_from_summary(
@@ -376,8 +375,7 @@ def run_backtest_from_summary(
     summary_ddf = summary_ddf.persist()
     if game_id:
         summary_ddf = summary_ddf[summary_ddf['game_id'] == game_id]
-    summary_ddf.info(memory_usage=True)
-    logging.info("Summary loaded")
+    # logging.info("Summary loaded")
 
 
     start_time = time.perf_counter()
@@ -390,4 +388,4 @@ def run_backtest_from_summary(
         allowed_normalized_markets
     ))
 
-    logging.info(f"Processed all files in {time.perf_counter() - start_time} seconds")
+    # logging.info(f"Processed all files in {time.perf_counter() - start_time} seconds")
