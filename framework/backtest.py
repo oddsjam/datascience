@@ -167,7 +167,9 @@ NORMALIZED_SPORTSBOOKS_TO_EXCLUDE = {
     "dafabet", # this book isn't used on the tools right now
     "dazn_bet", # this book isn't used on the tools right now
     "blue_book", # this is a clone of FD
+    "betr",
 }
+NORMALIZED_SPORTSBOOK_SUBSTRING_TO_EXCLUDE = "_test_"
 
 
 def _process_file_from_summary(
@@ -189,9 +191,9 @@ def _process_file_from_summary(
     summary_df = summary_ddf.compute()
     grouped = summary_df.groupby(['game_id', 'normalized_market'])
     i = 0
-    for (game_id, normalized_market), group_data in grouped:
+    for (game_id, normalized_market), group_data in sorted(grouped):
         # Convert group data to list of dictionaries (odds records)
-        odds_list = group_data.to_dict('records')
+        odds_list = group_data.sort_values(['sportsbook', 'outcome']).to_dict('records')
         odds = []
         for odd in odds_list:
             odd["points"] = odd.pop("olv_points", None)
@@ -207,6 +209,8 @@ def _process_file_from_summary(
             # exclude circa vegas, because the closing line price is messed up
             normalized_sportsbook = normalize_id(odd["sportsbook"])
             if normalized_sportsbook in NORMALIZED_SPORTSBOOKS_TO_EXCLUDE:
+                continue
+            if NORMALIZED_SPORTSBOOK_SUBSTRING_TO_EXCLUDE in normalized_sportsbook:
                 continue
             odds.append(dict_to_oddts(odd))
 
