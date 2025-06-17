@@ -366,6 +366,7 @@ def run_backtest_from_summary(
     log_level: str | None = None,
     allowed_normalized_markets: set[str] = set(),
     game_id: str | None = None,
+    output_file_suffix: str = "",
 ):
     if log_level:
         root = logging.getLogger()
@@ -383,7 +384,10 @@ def run_backtest_from_summary(
     # logging.info("Summary loaded")
 
 
-    start_time = time.perf_counter()
+    # start_time = time.perf_counter()
+
+    if output_file_suffix:
+        save_name = f"{save_name}_{output_file_suffix}"
     process_file_wrapper_from_summary((
         summary_ddf,
         output_folder,
