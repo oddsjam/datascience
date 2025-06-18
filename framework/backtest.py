@@ -6,7 +6,9 @@ from datetime import datetime
 from logging.handlers import QueueHandler, QueueListener
 from multiprocessing import Manager, Pool
 from typing import Callable
-
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing as mp
+from functools import partial
 import dask
 import dask.dataframe as dd
 import pandas as pd
@@ -172,13 +174,46 @@ NORMALIZED_SPORTSBOOKS_TO_EXCLUDE = {
 NORMALIZED_SPORTSBOOK_SUBSTRING_TO_EXCLUDE = "_test_"
 
 
+def _process_group(group_data, find_opportunities_function, normalized_market):
+    """Process a single group and return opportunities"""
+    # Convert group data to list of dictionaries (odds records)
+    odds_list = group_data.sort_values(['sportsbook', 'outcome']).to_dict('records')
+    odds = []
+    
+    for odd in odds_list:
+        odd["points"] = odd.pop("olv_points", None)
+        for k in ["olv_is_main", "clv_is_main", "grade", "desired", "outcome", 
+                  "home_team", "away_team", "player_id", "clv_points", "olv_price", 
+                  "olv_points", "opened_at", "fixture_id", "processed", "closed_at"]:
+            odd.pop(k, None)
+        odd["timestamp"] = odd.pop("start_date").to_pydatetime().timestamp()
+        odd["price"] = odd.pop("clv_price", None)
+        
+        for k, v in odd.items():
+            if pd.isna(v):
+                odd[k] = None
+        
+        if odd["price"] is None:
+            continue
+            
+        normalized_sportsbook = normalize_id(odd["sportsbook"])
+        if normalized_sportsbook in NORMALIZED_SPORTSBOOKS_TO_EXCLUDE:
+            continue
+        if NORMALIZED_SPORTSBOOK_SUBSTRING_TO_EXCLUDE in normalized_sportsbook:
+            continue
+        odds.append(dict_to_oddts(odd))
+
+    return find_opportunities_function({normalized_market: odds})
+
+
 def _process_file_from_summary(
     summary_ddf,
     output_folder,
     find_opportunities_function,
     log_level,
     save_name,
-    allowed_normalized_markets = set()
+    allowed_normalized_markets = set(),
+    parallel = False,
 ):
     opportunities = []
     parquet_file_index = 0
@@ -186,48 +221,50 @@ def _process_file_from_summary(
     if allowed_normalized_markets:
         summary_ddf = summary_ddf[summary_ddf['normalized_market'].isin(allowed_normalized_markets)]
 
-    num_combinations = summary_ddf[['game_id', 'normalized_market']].drop_duplicates().shape[0].compute()
-
     summary_df = summary_ddf.compute()
     grouped = summary_df.groupby(['game_id', 'normalized_market'])
-    i = 0
-    for (game_id, normalized_market), group_data in sorted(grouped):
-        # Convert group data to list of dictionaries (odds records)
-        odds_list = group_data.sort_values(['sportsbook', 'outcome']).to_dict('records')
-        odds = []
-        for odd in odds_list:
-            odd["points"] = odd.pop("olv_points", None)
-            for k in ["olv_is_main", "clv_is_main", "grade", "desired", "outcome", "home_team", "away_team", "player_id", "clv_points", "olv_price", "olv_points", "opened_at", "fixture_id", "processed", "closed_at"]:
-                odd.pop(k, None)
-            odd["timestamp"] = odd.pop("start_date").to_pydatetime().timestamp()
-            odd["price"] = odd.pop("clv_price", None)
-            for k, v in odd.items():
-                if pd.isna(v):
-                    odd[k] = None
-            if odd["price"] is None:
-                continue
-            # exclude circa vegas, because the closing line price is messed up
-            normalized_sportsbook = normalize_id(odd["sportsbook"])
-            if normalized_sportsbook in NORMALIZED_SPORTSBOOKS_TO_EXCLUDE:
-                continue
-            if NORMALIZED_SPORTSBOOK_SUBSTRING_TO_EXCLUDE in normalized_sportsbook:
-                continue
-            odds.append(dict_to_oddts(odd))
+    
+    # Prepare groups for parallel processing
+    groups_to_process = []
+    for (game_id, normalized_market), group_data in grouped:
+        groups_to_process.append((group_data, normalized_market))
+    
+    # Process groups in parallel
+    max_workers = min(mp.cpu_count(), len(groups_to_process)) if parallel else 1
 
-        opps = find_opportunities_function({ normalized_market: odds })
-        if opps:
-            opportunities.extend(opps)
-
-        if len(opportunities) >= 2500000 or i == num_combinations - 1:
-            oppo_ddf = dd.from_pandas(pd.DataFrame(opportunities), chunksize=500000)
-            oppo_ddf.to_parquet(
-                f"{output_folder}/{save_name}/opportunities_{save_name}/partitions/file_0_batch_{parquet_file_index}.parquet",
-                engine="pyarrow",
-            )
-            del oppo_ddf
-            opportunities = []
-            parquet_file_index += 1
-        i += 1
+    file_name = f"{output_folder}/{save_name}/opportunities_{save_name}/partitions/file_0_batch_{parquet_file_index}.parquet"
+    
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all tasks
+        future_to_group = {
+            executor.submit(_process_group, group_data, find_opportunities_function, normalized_market): i
+            for i, (group_data, normalized_market) in enumerate(groups_to_process)
+        }
+        
+        # Collect results as they complete
+        for future in as_completed(future_to_group):
+            opps = future.result()
+            if opps:
+                opportunities.extend(opps)
+            
+            # Save when batch is full
+            if len(opportunities) >= 2500000:
+                oppo_ddf = dd.from_pandas(pd.DataFrame(opportunities), chunksize=500000)
+                oppo_ddf.to_parquet(
+                    file_name,
+                    engine="pyarrow",
+                )
+                del oppo_ddf
+                opportunities = []
+                parquet_file_index += 1
+    
+    # Save remaining opportunities
+    if opportunities:
+        oppo_ddf = dd.from_pandas(pd.DataFrame(opportunities), chunksize=500000)
+        oppo_ddf.to_parquet(
+            file_name,
+            engine="pyarrow",
+        )
 
 
 def process_file_wrapper(args):
@@ -272,7 +309,8 @@ def process_file_wrapper_from_summary(args):
         find_opportunities_function,
         log_level,
         save_name,
-        allowed_normalized_markets
+        allowed_normalized_markets,
+        parallel
     ) = args
 
     if not log_level:
@@ -287,7 +325,8 @@ def process_file_wrapper_from_summary(args):
         find_opportunities_function,
         log_level,
         save_name,
-        allowed_normalized_markets
+        allowed_normalized_markets,
+        parallel,
     )
 
 
@@ -367,6 +406,7 @@ def run_backtest_from_summary(
     allowed_normalized_markets: set[str] = set(),
     game_id: str | None = None,
     output_file_suffix: str = "",
+    parallel: bool = False,
 ):
     if log_level:
         root = logging.getLogger()
@@ -384,7 +424,7 @@ def run_backtest_from_summary(
     # logging.info("Summary loaded")
 
 
-    # start_time = time.perf_counter()
+    start_time = time.perf_counter()
 
     if output_file_suffix:
         save_name = f"{save_name}_{output_file_suffix}"
@@ -394,7 +434,8 @@ def run_backtest_from_summary(
         find_opportunities_function,
         log_level,
         save_name,
-        allowed_normalized_markets
+        allowed_normalized_markets,
+        parallel
     ))
 
-    # logging.info(f"Processed all files in {time.perf_counter() - start_time} seconds")
+    logging.info(f"Processed all files in {time.perf_counter() - start_time} seconds")
