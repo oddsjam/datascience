@@ -170,6 +170,8 @@ NORMALIZED_SPORTSBOOKS_TO_EXCLUDE = {
     "dazn_bet", # this book isn't used on the tools right now
     "blue_book", # this is a clone of FD
     "betr",
+    "betr_picks",
+    "betr_picks_all_",
 }
 NORMALIZED_SPORTSBOOK_SUBSTRING_TO_EXCLUDE = "_test_"
 
@@ -229,42 +231,56 @@ def _process_file_from_summary(
     for (game_id, normalized_market), group_data in grouped:
         groups_to_process.append((group_data, normalized_market))
     
-    # Process groups in parallel
-    max_workers = min(mp.cpu_count(), len(groups_to_process)) if parallel else 1
-
     file_name = f"{output_folder}/{save_name}/opportunities_{save_name}/partitions/file_0_batch_{parquet_file_index}.parquet"
+
+
+    # Process groups in parallel
+    if parallel:
+        max_workers = min(mp.cpu_count(), len(groups_to_process))
     
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all tasks
-        future_to_group = {
-            executor.submit(_process_group, group_data, find_opportunities_function, normalized_market): i
-            for i, (group_data, normalized_market) in enumerate(groups_to_process)
-        }
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks
+            future_to_group = {
+                executor.submit(_process_group, group_data, find_opportunities_function, normalized_market): i
+                for i, (group_data, normalized_market) in enumerate(groups_to_process)
+            }
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_group):
+                opps = future.result()
+                if opps:
+                    opportunities.extend(opps)
+                
+                # Save when batch is full
+                if len(opportunities) >= 2500000:
+                    oppo_ddf = dd.from_pandas(pd.DataFrame(opportunities), chunksize=500000)
+                    oppo_ddf.to_parquet(
+                        file_name,
+                        engine="pyarrow",
+                    )
+                    del oppo_ddf
+                    opportunities = []
+                    parquet_file_index += 1
         
-        # Collect results as they complete
-        for future in as_completed(future_to_group):
-            opps = future.result()
+        # Save remaining opportunities
+        if opportunities:
+            oppo_ddf = dd.from_pandas(pd.DataFrame(opportunities), chunksize=500000)
+            oppo_ddf.to_parquet(
+                file_name,
+                engine="pyarrow",
+            )
+    else:
+        for i, (group_data, normalized_market) in enumerate(groups_to_process):
+            opps = _process_group(group_data, find_opportunities_function, normalized_market)
             if opps:
                 opportunities.extend(opps)
-            
-            # Save when batch is full
-            if len(opportunities) >= 2500000:
+            if len(opportunities) >= 2500000 or i == len(groups_to_process) - 1:
                 oppo_ddf = dd.from_pandas(pd.DataFrame(opportunities), chunksize=500000)
                 oppo_ddf.to_parquet(
                     file_name,
                     engine="pyarrow",
                 )
                 del oppo_ddf
-                opportunities = []
-                parquet_file_index += 1
-    
-    # Save remaining opportunities
-    if opportunities:
-        oppo_ddf = dd.from_pandas(pd.DataFrame(opportunities), chunksize=500000)
-        oppo_ddf.to_parquet(
-            file_name,
-            engine="pyarrow",
-        )
 
 
 def process_file_wrapper(args):
